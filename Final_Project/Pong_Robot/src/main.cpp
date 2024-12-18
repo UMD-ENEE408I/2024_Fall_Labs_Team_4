@@ -16,14 +16,15 @@ const char* ssid = "iPhone (18)";
 const char* password = "lillit12";
 
 // Server IP and port
-const char* host = "172.20.10.8";  // Replace with the IP address of server
+const char* host = "172.20.10.11";  // Replace with the IP address of server
 const uint16_t port = 9500;
 
 // Create a client
 WiFiClient client;
 
 int i = 1;
-int robo_num = 1; //change to 1,2,3 (2 is ball)
+int robo_num = 3; //change to 1,2,3 (2 is ball)
+char* state = "forwards";
 
 // IMU
 Adafruit_MPU6050 mpu;
@@ -58,21 +59,6 @@ const int resolution = 8; // 8-bit resolution -> PWM values go from 0-255
 // LED
 const int ledChannel = 0;
 
-// PID
-float e;
-float p_e;
-float d_e;
-float total_e;
-
-// Assign values to the following feedback constants:
-float Kp = 4;
-float Kd = 0;
-float Ki = 0;
-
-const float time_to_turn_180 = 260.0;
-int start = 0;
-int in_pos = 0;
-
 /*
  *  Movement functions
  */
@@ -106,48 +92,39 @@ void M2_stop() {
   ledcWrite(M2_IN_2_CHANNEL, 0);
 }
 
-void turn(bool clockwise, int right_wheel, int left_wheel, float angle) {
-  int delay_time = (int)((angle/180.0) * time_to_turn_180);
-  
-  if (clockwise) {
-    M1_forward(left_wheel);
-    M2_backward(right_wheel);
-  } 
-  
-  else {
-    M1_backward(left_wheel);
-    M2_forward(right_wheel);
-  }
-
-  delay(delay_time);
-
-  // Stop the robot
-  M1_stop();
-  M2_stop();
-
-  delay(1000);
-}
-
-void handle_messages(int right_wheel, int left_wheel){
-  Data response;
+void handle_messages(int right_wheel, int left_wheel, Data response){
   client.readBytes((char*)&response, sizeof(response));
+  if((int)response.robo == robo_num || (int)response.robo == 4){
+    if(response.text == "over"){
+      while(1){
+        // trap in here
+        M1_stop();
+        M2_stop();
+      }
+    }
 
-  if(response.text == "Game Over"){
-    while(1){
-      // trap in here
-      M1_stop();
-      M2_stop();
+    else if(response.text == "backwards"){
+      M1_backward(left_wheel);
+      M2_backward(right_wheel);
+      state = "backwards";
+    }
+
+    else if(response.text == "forwards"){
+      M1_forward(left_wheel);
+      M2_forward(right_wheel);
+      state = "forwards";
     }
   }
 
-  else if(response.text == "backwards"){
-    M1_backward(left_wheel);
-    M2_backward(right_wheel);
-  }
-
-  else if(response.text == "forwards"){
-    M1_forward(left_wheel);
-    M2_forward(right_wheel);
+  else if(robo_num == 2){
+    if(state = "backwards"){
+      M1_backward(left_wheel);
+      M2_backward(right_wheel);
+    }
+    else{
+      M1_forward(left_wheel);
+      M2_forward(right_wheel);
+    }
   }
 }
 
@@ -264,85 +241,41 @@ void setup() {
   }
 }
 
-void loop(){
-  int u;
-  int rightWheelPWM;
-  int leftWheelPWM;
-
-  int pidRight;
-  int pidLeft;
-  float pos;
-
-  // Define the PID errors
-  float DT = .5;
-  e = 6 - pos;
-  d_e = (e - p_e) / DT;
-  total_e += e*DT;
-
-  // Update the previous error
-  p_e = e;
-
-  // Implement PID control (include safeguards for when the PWM values go below 0 or exceed maximum)
-  u = Kp * e + 0 * d_e + Ki * total_e; //need to integrate e
-
-  // Implement PID control (include safeguards for when the PWM values go below 0 or exceed maximum)
-  pidRight = 150 - u;
-  pidLeft = 136 + u;
-
-  // Constrain the PWM values
-  if (pidRight < 0) {
-    pidRight = 0;
-  } else if (pidRight > PWM_MAX) {
-    pidRight = PWM_MAX;
-  }
-
-  if (pidLeft < 0) {
-    pidLeft = 0;
-  } else if (pidLeft > PWM_MAX) {
-    pidLeft = PWM_MAX;
-  }
-
-  while(client.available() && in_pos == 0){
-    Data response;
-    client.readBytes((char*)&response, sizeof(response));
-
-    if(response.text == "2"){
-      turn(1, rightWheelPWM, leftWheelPWM, 90.0);
-      
-      M1_forward(pidLeft);
-      M2_forward(pidRight);
-      delay(1000); //change this
-
-      M1_stop();
-      M2_stop();
-      delay(1000);
-
-      turn(0, rightWheelPWM, leftWheelPWM, 90.0);
-    }
-
+void loop() {
+    // Prepare data packet
     Data data;
-    data.seq = 1;
-    data.distance = 1000;
-    data.voltage = 3.7f;
-    strncpy(data.text, "in position", sizeof(data.text) - 1);
-    data.text[sizeof(data.text) - 1] = '\0';
+    data.robo = i;
+    strncpy(data.text, "Hello from ESP32!", sizeof(data.text) - 1);
+    data.text[sizeof(data.text) - 1] = '\0'; // Ensure null termination
+    //Serial.printf("seq %d distance %ld voltage %f text %s\n", data.seq, data.distance, data.voltage, data.text);
 
-    in_pos = 1;
-  }
+    // Check if connected to the server
+    if (client.connected()) {
+      // Read server's response (if any)
+      while (client.available()) {
+        Data response;
+        //client.readBytes((char*)&response, sizeof(response)); // Read data from the server and unpack it into the response struct
+        handle_messages(100, 100, response);
+        delay(1000);
+        M1_stop();
+        M2_stop();
+      }
 
-  while(client.available() && start == 0){
-    Data response;
-    client.readBytes((char*)&response, sizeof(response));
-    
-    if(response.text == "Start"){
-      start = 1;
+      // Send data to the server
+      client.write((uint8_t*)&data, sizeof(data));
+
+      // Increment sequence number for the next packet and add a delay between messages
+      data.robo++;
+      i += 1;
+      delay(5000); // Send data every 5 seconds 
+    } else {
+      Serial.println("Disconnected from server.");
+      // Connect to the server
+      if (client.connect(host, port)) {
+        Serial.println("Connected to server!");
+      } else {
+        Serial.println("Connection to server failed.");
+        return;
+      }
     }
-    else{
-      Serial.println("Waiting to start game...");
-    }
-  }
-
-  while(client.available()){
-    handle_messages(pidRight, pidLeft);
-  }
 }
